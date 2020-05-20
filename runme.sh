@@ -25,6 +25,7 @@ BOOT_LOADER=${BOOT_LOADER:-u-boot}
 DDR_SPEED=${DDR_SPEED:-3200}
 SERDES=${SERDES:-8_5_2}
 UEFI_RELEASE=${UEFI_RELEASE:-RELEASE}
+WITH_LINUX=${WITH_LINUX:-no}
 
 mkdir -p build images
 ROOTDIR=`pwd`
@@ -63,6 +64,7 @@ echo "DDR_SPEED=$DDR_SPEED"
 echo "SERDES=$SERDES"
 echo "DPC=$DPC"
 echo "DPL=$DPL"
+echo "WITH_LINUX=$WITH_LINUX"
 echo "IMG=lx2160acex7_${BOOT_LOADER}_${SPEED}_${SERDES}.img"
 echo "Press enter when ready..."
 read
@@ -146,19 +148,19 @@ for i in $QORIQ_COMPONENTS; do
 	fi
 done
 
-
-if [[ ! -f $ROOTDIR/build/ubuntu-core.ext4 ]]; then
-	cd $ROOTDIR/build
-	mkdir -p ubuntu
-	cd ubuntu
-	if [ ! -d buildroot ]; then
-		git clone https://github.com/buildroot/buildroot -b $BUILDROOT_VERSION
-	fi
-	cd buildroot
-	cp $ROOTDIR/configs/buildroot/lx2160acex7_defconfig configs/
-	make lx2160acex7_defconfig
-	mkdir -p overlay/etc/init.d/
-	cat > overlay/etc/init.d/S99bootstrap-ubuntu.sh << EOF
+if [ "x$WITH_LINUX" == "xyes" ]; then
+	if [[ ! -f $ROOTDIR/build/ubuntu-core.ext4 ]]; then
+		cd $ROOTDIR/build
+		mkdir -p ubuntu
+		cd ubuntu
+		if [ ! -d buildroot ]; then
+			git clone https://github.com/buildroot/buildroot -b $BUILDROOT_VERSION
+		fi
+		cd buildroot
+		cp $ROOTDIR/configs/buildroot/lx2160acex7_defconfig configs/
+		make lx2160acex7_defconfig
+		mkdir -p overlay/etc/init.d/
+		cat > overlay/etc/init.d/S99bootstrap-ubuntu.sh << EOF
 #!/bin/sh
 
 case "\$1" in
@@ -191,12 +193,13 @@ case "\$1" in
 		;;
 esac
 EOF
-	chmod +x overlay/etc/init.d/S99bootstrap-ubuntu.sh
-	make
-	IMG=ubuntu-core.ext4.tmp
-	truncate -s 350M $IMG
-	qemu-system-aarch64 -m 1G -M virt -cpu cortex-a57 -nographic -smp 1 -kernel output/images/Image -append "console=ttyAMA0" -netdev user,id=eth0 -device virtio-net-device,netdev=eth0 -initrd output/images/rootfs.cpio.gz -drive file=$IMG,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 -no-reboot
-	mv $IMG $ROOTDIR/build/ubuntu-core.ext4
+		chmod +x overlay/etc/init.d/S99bootstrap-ubuntu.sh
+		make
+		IMG=ubuntu-core.ext4.tmp
+		truncate -s 350M $IMG
+		qemu-system-aarch64 -m 1G -M virt -cpu cortex-a57 -nographic -smp 1 -kernel output/images/Image -append "console=ttyAMA0" -netdev user,id=eth0 -device virtio-net-device,netdev=eth0 -initrd output/images/rootfs.cpio.gz -drive file=$IMG,if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 -no-reboot
+		mv $IMG $ROOTDIR/build/ubuntu-core.ext4
+	fi
 fi
 
 if [[ ! -d $ROOTDIR/build/qoriq-mc-binary ]]; then
@@ -357,8 +360,9 @@ make -j32 T=arm64-dpaa2-linuxapp-gcc CONFIG_RTE_KNI_KMOD=n CONFIG_RTE_LIBRTE_PMD
 ###############################################################################
 echo "Assembling kernel and rootfs image"
 cd $ROOTDIR
-mkdir -p $ROOTDIR/images/tmp/extlinux/
-cat > $ROOTDIR/images/tmp/extlinux/extlinux.conf << EOF
+if [ "x$WITH_LINUX" == "xyes" ]; then
+	mkdir -p $ROOTDIR/images/tmp/extlinux/
+	cat > $ROOTDIR/images/tmp/extlinux/extlinux.conf << EOF
   TIMEOUT 30
   DEFAULT linux
   MENU TITLE linux-lx2160a boot options
@@ -369,59 +373,64 @@ cat > $ROOTDIR/images/tmp/extlinux/extlinux.conf << EOF
     APPEND console=ttyAMA0,115200 earlycon=pl011,mmio32,0x21c0000 default_hugepagesz=1024m hugepagesz=1024m hugepages=2 pci=pcie_bus_perf root=PARTUUID=30303030-01 rw rootwait
 EOF
 
-# blkid images/tmp/ubuntu-core.img | cut -f2 -d'"'
-cp $ROOTDIR/build/ubuntu-core.ext4 $ROOTDIR/images/tmp/
-e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:extlinux
-e2cp -G 0 -O 0 $ROOTDIR/images/tmp/extlinux/extlinux.conf $ROOTDIR/images/tmp/ubuntu-core.ext4:extlinux/
-e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:boot
-e2cp -G 0 -O 0 $ROOTDIR/images/tmp/boot/Image $ROOTDIR/images/tmp/ubuntu-core.ext4:boot/
-e2cp -G 0 -O 0 $ROOTDIR/images/tmp/boot/fsl-lx2160a-cex7.dtb $ROOTDIR/images/tmp/ubuntu-core.ext4:boot/
+	# blkid images/tmp/ubuntu-core.img | cut -f2 -d'"'
+	cp $ROOTDIR/build/ubuntu-core.ext4 $ROOTDIR/images/tmp/
+	e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:extlinux
+	e2cp -G 0 -O 0 $ROOTDIR/images/tmp/extlinux/extlinux.conf $ROOTDIR/images/tmp/ubuntu-core.ext4:extlinux/
+	e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:boot
+	e2cp -G 0 -O 0 $ROOTDIR/images/tmp/boot/Image $ROOTDIR/images/tmp/ubuntu-core.ext4:boot/
+	e2cp -G 0 -O 0 $ROOTDIR/images/tmp/boot/fsl-lx2160a-cex7.dtb $ROOTDIR/images/tmp/ubuntu-core.ext4:boot/
 
-# Copy over kernel image
-echo "Copying kernel modules"
-cd $ROOTDIR/images/tmp/
-for i in `find lib`; do
-	if [ -d $i ]; then
-		e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:usr/$i
-	fi
-	if [ -f $i ]; then
-		DIR=`dirname $i`
-		e2cp -G 0 -O 0 -p $ROOTDIR/images/tmp/$i $ROOTDIR/images/tmp/ubuntu-core.ext4:usr/$DIR
-	fi
-done
-cd -
+	# Copy over kernel image
+	echo "Copying kernel modules"
+	cd $ROOTDIR/images/tmp/
+	for i in `find lib`; do
+		if [ -d $i ]; then
+			e2mkdir -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.ext4:usr/$i
+		fi
+		if [ -f $i ]; then
+			DIR=`dirname $i`
+			e2cp -G 0 -O 0 -p $ROOTDIR/images/tmp/$i $ROOTDIR/images/tmp/ubuntu-core.ext4:usr/$DIR
+		fi
+	done
+	cd -
 
-# install restool
-echo "Install restool"
-cd $ROOTDIR/
-e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/ls-append-dpl $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
-e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/ls-main $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
-e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/restool $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
-e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addmux
-e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addni
-e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addsw
-e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-listmac
-e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-listni
+	# install restool
+	echo "Install restool"
+	cd $ROOTDIR/
+	e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/ls-append-dpl $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
+	e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/ls-main $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
+	e2cp -p -G 0 -O 0 $ROOTDIR/build/restool/install/usr/bin/restool $ROOTDIR/images/tmp/ubuntu-core.ext4:/usr/bin/
+	e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addmux
+	e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addni
+	e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-addsw
+	e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-listmac
+	e2ln images/tmp/ubuntu-core.ext4:/usr/bin/ls-main /usr/bin/ls-listni
 
-truncate -s 420M $ROOTDIR/images/tmp/ubuntu-core.img
-parted --script $ROOTDIR/images/tmp/ubuntu-core.img mklabel msdos mkpart primary 64MiB 417MiB
-# Generate the above partuuid 3030303030 which is the 4 characters of '0' in ascii
-echo "0000" | dd of=$ROOTDIR/images/tmp/ubuntu-core.img bs=1 seek=440 conv=notrunc
-dd if=$ROOTDIR/images/tmp/ubuntu-core.ext4 of=$ROOTDIR/images/tmp/ubuntu-core.img bs=1M seek=64 conv=notrunc
+	truncate -s 420M $ROOTDIR/images/tmp/ubuntu-core.img
+	parted --script $ROOTDIR/images/tmp/ubuntu-core.img mklabel msdos mkpart primary 64MiB 417MiB
+	# Generate the above partuuid 3030303030 which is the 4 characters of '0' in ascii
+	echo "0000" | dd of=$ROOTDIR/images/tmp/ubuntu-core.img bs=1 seek=440 conv=notrunc
+	dd if=$ROOTDIR/images/tmp/ubuntu-core.ext4 of=$ROOTDIR/images/tmp/ubuntu-core.img bs=1M seek=64 conv=notrunc
+fi
 
 echo "Assembling Boot Image"
 cd $ROOTDIR/
 IMG=lx2160acex7_${BOOT_LOADER}_${SPEED}_${SERDES}.img
 rm -rf $ROOTDIR/images/${IMG}
-truncate -s 528M $ROOTDIR/images/${IMG}
-#dd if=/dev/zero of=$ROOTDIR/images/${IMG} bs=1M count=1
-parted --script $ROOTDIR/images/${IMG} mklabel msdos mkpart primary 64MiB 527MiB
-truncate -s 463M $ROOTDIR/images/tmp/boot.part
-mkfs.ext4 -b 4096 -F $ROOTDIR/images/tmp/boot.part
-\rm -rf $ROOTDIR/images/tmp/xspi_header.img
-truncate -s 128K $ROOTDIR/images/tmp/xspi_header.img
-dd if=$ROOTDIR/build/atf/build/lx2160acex7/release/bl2_auto.pbl of=$ROOTDIR/images/tmp/xspi_header.img bs=512 conv=notrunc
-e2cp -G 0 -O 0 $ROOTDIR/images/tmp/xspi_header.img $ROOTDIR/images/tmp/boot.part:/
+if [ "x$WITH_LINUX" == "xyes" ]; then
+	truncate -s 528M $ROOTDIR/images/${IMG}
+	#dd if=/dev/zero of=$ROOTDIR/images/${IMG} bs=1M count=1
+	parted --script $ROOTDIR/images/${IMG} mklabel msdos mkpart primary 64MiB 527MiB
+	truncate -s 463M $ROOTDIR/images/tmp/boot.part
+	mkfs.ext4 -b 4096 -F $ROOTDIR/images/tmp/boot.part
+	\rm -rf $ROOTDIR/images/tmp/xspi_header.img
+	truncate -s 128K $ROOTDIR/images/tmp/xspi_header.img
+	dd if=$ROOTDIR/build/atf/build/lx2160acex7/release/bl2_auto.pbl of=$ROOTDIR/images/tmp/xspi_header.img bs=512 conv=notrunc
+	e2cp -G 0 -O 0 $ROOTDIR/images/tmp/xspi_header.img $ROOTDIR/images/tmp/boot.part:/
+else
+	dd if=/dev/zero of=$ROOTDIR/images/${IMG} bs=512 count=32768
+fi
 
 # PFE firmware at 0x100
 
@@ -466,10 +475,12 @@ dd if=$ROOTDIR/images/${IMG} of=$ROOTDIR/images/lx2160acex7_xspi_${BOOT_LOADER}_
 dd if=$ROOTDIR/build/atf/build/lx2160acex7/release/bl2_auto.pbl of=images/lx2160acex7_xspi_${BOOT_LOADER}_${SPEED}_${SERDES}.img bs=512 conv=notrunc
 dd if=$ROOTDIR/build/atf/build/lx2160acex7/release/bl2_auto.pbl of=images/${IMG} bs=512 seek=8 conv=notrunc
 
-# Copy first 64MByte from image excluding MBR to ubuntu-core.img for eMMC boot
-dd if=images/${IMG} of=$ROOTDIR/images/tmp/ubuntu-core.img bs=512 seek=1 skip=1 count=131071 conv=notrunc
-e2cp -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.img $ROOTDIR/images/tmp/boot.part:/
-dd if=$ROOTDIR/images/tmp/boot.part of=$ROOTDIR/images/${IMG} bs=1M seek=64
+if [ "x$WITH_LINUX" == "xyes" ]; then
+	# Copy first 64MByte from image excluding MBR to ubuntu-core.img for eMMC boot
+	dd if=images/${IMG} of=$ROOTDIR/images/tmp/ubuntu-core.img bs=512 seek=1 skip=1 count=131071 conv=notrunc
+	e2cp -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.img $ROOTDIR/images/tmp/boot.part:/
+	dd if=$ROOTDIR/images/tmp/boot.part of=$ROOTDIR/images/${IMG} bs=1M seek=64
+fi
 
 echo "Images located at:"
 echo "images/${IMG}"
