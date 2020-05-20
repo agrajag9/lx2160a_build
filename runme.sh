@@ -132,7 +132,7 @@ for i in $QORIQ_COMPONENTS; do
 			./fiptool create --ddr-immem-udimm-1d ddr-phy-binary/lx2160a/ddr4_pmu_train_imem.bin --ddr-immem-udimm-2d ddr-phy-binary/lx2160a/ddr4_2d_pmu_train_imem.bin --ddr-dmmem-udimm-1d ddr-phy-binary/lx2160a/ddr4_pmu_train_dmem.bin --ddr-dmmem-udimm-2d ddr-phy-binary/lx2160a/ddr4_2d_pmu_train_dmem.bin --ddr-immem-rdimm-1d ddr-phy-binary/lx2160a/ddr4_rdimm_pmu_train_imem.bin --ddr-immem-rdimm-2d ddr-phy-binary/lx2160a/ddr4_rdimm2d_pmu_train_imem.bin --ddr-dmmem-rdimm-1d ddr-phy-binary/lx2160a/ddr4_rdimm_pmu_train_dmem.bin --ddr-dmmem-rdimm-2d ddr-phy-binary/lx2160a/ddr4_rdimm2d_pmu_train_dmem.bin fip_ddr_all.bin
 		fi
 		if [ "x$i" == "xuefi" ]; then
-			cd $ROOTDIR/build/uefi/
+			cd $ROOTDIR/build/tianocore/
 			git clone https://source.codeaurora.org/external/qoriq/qoriq-components/edk2-platforms
 			cd edk2-platforms
 			git checkout -b $RELEASE refs/tags/$RELEASE
@@ -147,6 +147,19 @@ for i in $QORIQ_COMPONENTS; do
 		fi
 	fi
 done
+
+if [ "x$BOOT_LOADER" == "xuefi" ]; then
+	mkdir -p $ROOTDIR/build/tianocore
+	cd $ROOTDIR/build/tianocore
+	git clone https://github.com/SolidRun/edk2
+	git clone https://github.com/SolidRun/edk2-platforms
+	git clone https://github.com/SolidRun/edk2-non-osi
+	cd $ROOTDIR/build/tianocore/edk2
+	git checkout remotes/origin/stable201911-lx2160a
+	git submodule update --init
+	cd $ROOTDIR/build/tianocore/edk2-platforms
+	git checkout remotes/origin/master-lx2160a
+fi
 
 if [ "x$WITH_LINUX" == "xyes" ]; then
 	if [[ ! -f $ROOTDIR/build/ubuntu-core.ext4 ]]; then
@@ -236,29 +249,18 @@ fi
 
 if [ "x$BOOT_LOADER" == "xuefi" ]; then
 	echo "Build UEFI"
-	cd $ROOTDIR/build/uefi
+	cd $ROOTDIR/build/tianocore
 	# set the aarch64-linux-gnu cross compiler to the oldie 4.9 linaro toolchain (UEFI build requirement)
-	PATH_SAVED=$PATH
-	export PATH=$ROOTDIR/build/toolchain/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu/bin/:$PATH
-	source  edksetup.sh
-	cd edk2-platforms/Platform/NXP
-	source Env.cshrc
-	make -C $ROOTDIR/build/uefi/BaseTools/Source/C
-#	./build.sh LX2160 RDB RELEASE clean
-#	./build.sh LX2160 RDB RELEASE
-#	export BL33=$ROOTDIR/build/uefi/Build/LX2160aRdbPkg/RELEASE_GCC49/FV/LX2160ARDB_EFI.fd
-#	build -p "$PACKAGES_PATH/Platform/NXP/LX2160aRdbPkg/LX2160aRdbPkg.dsc" -a AARCH64 -t GCC49 -b DEBUG
-#	export BL33=$ROOTDIR/build/uefi/Build/LX2160aRdbPkg/RELEASE_GCC49/FV/LX2160ARDB_EFI.fd
-#	export BL33=$ROOTDIR/build/uefi/Build/LX2160aRdbPkg/DEBUG_GCC49/FV/LX2160ARDB_EFI.fd
-
-#	build -p "$PACKAGES_PATH/Platform/NXP/LX2160aCex7Pkg/LX2160aCex7Pkg.dsc" -a AARCH64 -t GCC49 -b DEBUG clean
-
-#	build -p "$PACKAGES_PATH/Platform/NXP/LX2160aCex7Pkg/LX2160aCex7Pkg.dsc" -a AARCH64 -t GCC49 -b $UEFI_RELEASE clean
-	build -p "$PACKAGES_PATH/Platform/NXP/LX2160aCex7Pkg/LX2160aCex7Pkg.dsc" -a AARCH64 -t GCC49 -b $UEFI_RELEASE -y build.log
-	export BL33=$ROOTDIR/build/uefi/Build/LX2160aCex7Pkg/${UEFI_RELEASE}_GCC49/FV/LX2160ACEX7_EFI.fd
-
-	# Return to the newer linaro gcc
-	export PATH=$PATH_SAVED
+	PYTHON_COMMAND=/usr/bin/python3 make -C $ROOTDIR/build/tianocore/edk2/BaseTools
+	export GCC5_AARCH64_PREFIX=$CROSS_COMPILE
+	export WORKSPACE=$ROOTDIR/build/tianocore
+	export PACKAGES_PATH=$WORKSPACE/edk2:$WORKSPACE/edk2-platforms:$WORKSPACE/edk2-non-osi
+	source  edk2/edksetup.sh
+	if [ "x$MAKE_CLEAN" != "x" ]; then
+		build -p "edk2-platforms/Platform/SolidRun/LX2160aCex7/LX2160aCex7.dsc" -a AARCH64 -t GCC5 -b $UEFI_RELEASE -y build.log clean
+	fi
+	build -p "edk2-platforms/Platform/SolidRun/LX2160aCex7/LX2160aCex7.dsc" -a AARCH64 -t GCC5 -b $UEFI_RELEASE -y build.log
+	export BL33=$ROOTDIR/build/tianocore/Build/LX2160aCex7/${UEFI_RELEASE}_GCC5/FV/LX2160ACEX7_EFI.fd
 	export ARCH=arm64 # While building UEFI ARCH is unset
 fi
 
@@ -463,8 +465,8 @@ dd if=$ROOTDIR/build/mc-utils/config/lx2160a/CEX7/${DPC} of=images/${IMG} bs=512
 
 # Device tree (UEFI) at 0x7800
 if [ "x${BOOT_LOADER}" == "xuefi" ]; then
-	dd if=$ROOTDIR/build/uefi/Build/LX2160aCex7Pkg/${UEFI_RELEASE}_GCC49/AARCH64/Platform/NXP/LX2160aCex7Pkg/DeviceTree/DeviceTree/OUTPUT/fsl-lx2160a-cex7.dtb of=images/${IMG} bs=512 seek=30720 conv=notrunc
-	dd if=$ROOTDIR/build/uefi/Build/LX2160aCex7Pkg/${UEFI_RELEASE}_GCC49/FV/LX2160ACEX7NV_EFI.fd of=images/${IMG} bs=512 seek=10240 conv=notrunc
+	dd if=$ROOTDIR/build/tianocore/Build/LX2160aCex7Pkg/${UEFI_RELEASE}_GCC49/AARCH64/Platform/NXP/LX2160aCex7Pkg/DeviceTree/DeviceTree/OUTPUT/fsl-lx2160a-cex7.dtb of=images/${IMG} bs=512 seek=30720 conv=notrunc
+	dd if=$ROOTDIR/build/tianocore/Build/LX2160aCex7Pkg/${UEFI_RELEASE}_GCC49/FV/LX2160ACEX7NV_EFI.fd of=images/${IMG} bs=512 seek=10240 conv=notrunc
 fi
 # Kernel at 0x8000
 dd if=$ROOTDIR/build/linux/kernel-lx2160acex7.itb of=images/${IMG} bs=512 seek=32768 conv=notrunc
