@@ -13,10 +13,10 @@ RELEASE=LSDK-19.09
 BUILDROOT_VERSION=2019.05.2
 
 #UEFI_RELEASE=DEBUG
-#BOOT=xspi
-#BOOT_LOADER=uefi
-#DDR_SPEED=3200
-#SERDES=8_5_2 # 8x10g
+BOOT=sd
+BOOT_LOADER=uefi
+DDR_SPEED=2400
+SERDES=8_5_2 # 8x10g
 #SERDES=13_5_2 # dual 100g
 #SERDES=20_5_2 # dual 40g
 ###############################################################################
@@ -77,6 +77,17 @@ if [ "x${SERDES:0:3}" == "x20_" ]; then
 	DPL=dpl-eth.dual-40g.19.dtb
 fi
 
+echo "Build Options:"
+echo "RELEASE: $RELEASE"
+echo "BOOT: $BOOT"
+echo "BOOT_LOADER: $BOOT_LOADER"
+echo "BOOTLOADER_ONLY: $BOOTLOADER_ONLY"
+echo "SPEED: $SPEED"
+echo "SERDES: $SERDES"
+echo "DPC: $DPC"
+echo "DPL: $DPL"
+echo "Enter to continue..."
+read
 echo "Checking all required tools are installed"
 
 set +e
@@ -322,7 +333,7 @@ dd if=$ROOTDIR/images/tmp/ubuntu-core.ext4 of=$ROOTDIR/images/tmp/ubuntu-core.im
 
 echo "Assembling Boot Image"
 cd $ROOTDIR/
-IMG=lx2160acex7_${SPEED}_${SERDES}_${BOOT}.img
+IMG=lx2160acex7_${BOOT}_${BOOT_LOADER}_${SPEED}_${SERDES}.img
 truncate -s 465M $ROOTDIR/images/${IMG}
 #dd if=/dev/zero of=$ROOTDIR/images/${IMG} bs=1M count=1
 parted --script $ROOTDIR/images/${IMG} mklabel msdos mkpart primary 64MiB 464MiB
@@ -332,7 +343,7 @@ e2cp -G 0 -O 0 $ROOTDIR/images/tmp/ubuntu-core.img $ROOTDIR/images/tmp/boot.part
 dd if=$ROOTDIR/images/tmp/boot.part of=$ROOTDIR/images/${IMG} bs=1M seek=64
 else
 cd $ROOTDIR/
-IMG=lx2160acex7_${SPEED}_${SERDES}_${BOOT}.img
+IMG=lx2160acex7_${BOOT}_${BOOT_LOADER}_${SPEED}_${SERDES}.img
 dd if=/dev/zero of=$ROOTDIR/images/${IMG} bs=1M count=16
 fi
 # RCW+PBI+BL2 at block 8
